@@ -1,0 +1,15 @@
+syntax: glob
+*.ncb
+*.plg
+*.bsc
+*.pch
+*.orig
+*.rej
+*.bk
+*.sdf
+*.opensdf
+*.suo
+Debug/*
+Release/*
+VTune/*
+ipch/*
