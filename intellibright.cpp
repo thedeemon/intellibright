@@ -6,7 +6,17 @@
 #include <vector>
 
 struct MyFilterData {
+	int targetMin, targetMax; //0 .. 255
+	int dynamicity, sceneThreshold, maxK; // 1 .. 100;  maxK = 40 means k <= 4.0
 	std::vector<int> lastColors;
+	double oldK;
+	int oldMin;
+
+	void init() {
+		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; maxK = 20;
+		lastColors.resize(96);
+		memset(&lastColors[0], 0, 96*sizeof(int));
+	}
 };
 
 extern HINSTANCE g_hInst;
@@ -48,25 +58,43 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 		cls[i/8 + 64] += nb[i];
 	}
 
+
 	int minBr = 0, maxBr = 255, shift = 0;
 	while(minBr < 256 && nrgb[minBr]==0) minBr++;
 	while(maxBr >= 0 && nrgb[maxBr]==0) maxBr--;
 	double k = 1;
-	BYTE tbl[256];
 	bool work = false;
 	if (maxBr > minBr && (maxBr - minBr) < 255) {
 		k = 255.0 / (maxBr - minBr);
-		work = true;
-		for(int i=0;i<256;i++) {
-			int v = (i - minBr) * k + 0.5;
-			tbl[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+		if (k > pData->maxK / 10.0) {
+			k = pData->maxK / 10.0;
 		}
-	} 
+		work = true;
+	}
+
+	int sum=0, total=0; //scene change check
+	for(int i=0; i<96; i++) {
+		sum += abs(cls[i] - pData->lastColors[i]);
+		total += cls[i];
+	}
+	double chng = (double)sum/total;
+	if (chng * 100 < pData->sceneThreshold) { // not new scene
+		double alpha = pData->dynamicity / 100.0;
+		k = k * alpha + pData->oldK * (1.0 - alpha); // smooth the parameters
+		minBr = minBr * alpha + pData->oldMin * (1.0 - alpha);
+		work = true;
+	}
+
+	BYTE tbl[256];
 
     dst = fa->dst.data;
     src = (const uint32 *)fa->src.data;
 
 	if (work) {
+		for(int i=0;i<256;i++) {
+			int v = (i - minBr) * k + 0.5;
+			tbl[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+		}
 		for(int y=0; y<h; ++y) {
 			for(int x=0; x<w; ++x) {
 				const BYTE* pixel = (const BYTE*)&src[x];
@@ -86,11 +114,18 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 			src = (const uint32 *)((const char *)src + srcpitch);
 		}
 	}    
+
+	for(int i=0;i<96;i++)
+		pData->lastColors[i] = cls[i];
+	pData->oldK = k;
+	pData->oldMin = minBr;
     return 0;
 }
 
 int startProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 {
+	MyFilterData* pData = (MyFilterData*)fa->filter_data;
+	if (pData->dynamicity==0) pData->init();
 	return 0;
 }
 
