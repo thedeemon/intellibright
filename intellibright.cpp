@@ -4,16 +4,20 @@
 #include "stdafx.h"
 #include <vd2/plugin/vdvideofilt.h>
 #include <vector>
+#include "resource.h"
+#include <Commctrl.h>
+#include <shellapi.h>
 
 struct MyFilterData {
 	int targetMin, targetMax; //0 .. 255
 	int dynamicity, sceneThreshold, maxK; // 1 .. 100;  maxK = 40 means k <= 4.0
+
 	std::vector<int> lastColors;
 	double oldK;
 	int oldMin;
 
 	void init() {
-		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; maxK = 20;
+		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; maxK = 50;
 		lastColors.resize(96);
 		memset(&lastColors[0], 0, 96*sizeof(int));
 	}
@@ -58,14 +62,13 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 		cls[i/8 + 64] += nb[i];
 	}
 
-
 	int minBr = 0, maxBr = 255, shift = 0;
 	while(minBr < 256 && nrgb[minBr]==0) minBr++;
 	while(maxBr >= 0 && nrgb[maxBr]==0) maxBr--;
 	double k = 1;
 	bool work = false;
-	if (maxBr > minBr && (maxBr - minBr) < 255) {
-		k = 255.0 / (maxBr - minBr);
+	if (maxBr > minBr && (minBr != pData->targetMin || maxBr != pData->targetMax)) {
+		k = (double)(pData->targetMax - pData->targetMin) / (maxBr - minBr);
 		if (k > pData->maxK / 10.0) {
 			k = pData->maxK / 10.0;
 		}
@@ -92,8 +95,8 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 
 	if (work) {
 		for(int i=0;i<256;i++) {
-			int v = (i - minBr) * k + 0.5;
-			tbl[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+			int v = (i - minBr) * k + pData->targetMin + 0.5;
+			tbl[i] = v < pData->targetMin ? pData->targetMin : (v > pData->targetMax ? pData->targetMax : v);
 		}
 		for(int y=0; y<h; ++y) {
 			for(int x=0; x<w; ++x) {
@@ -134,9 +137,109 @@ int endProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 	return 0;
 }
 
+INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lParam) 
+{
+	MyFilterData* pData = (MyFilterData*)GetWindowLongPtr(hdlg, DWLP_USER);
+	static bool editing = false;
+	static MyFilterData tempData;
+    switch(msg) {
+        case WM_INITDIALOG:
+			SetWindowLongPtr(hdlg, DWLP_USER, lParam);
+			pData = (MyFilterData*)lParam;
+			if (pData->dynamicity==0) pData->init();
+			tempData = *pData;
+			editing = true;
+			SetDlgItemInt(hdlg, IDC_MINBR, pData->targetMin, FALSE);
+			SetDlgItemInt(hdlg, IDC_MAXBR, pData->targetMax, FALSE);
+			SetDlgItemInt(hdlg, IDC_DYNA, pData->dynamicity, FALSE);
+			SetDlgItemInt(hdlg, IDC_SCENE, pData->sceneThreshold, FALSE);
+			SetDlgItemInt(hdlg, IDC_MAXK, pData->maxK, FALSE);
+
+			SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETRANGE, 0, MAKELONG(0, 255)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETPOS, 1, pData->targetMin); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLMAXBR), TBM_SETRANGE, 0, MAKELONG(0, 255)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLMAXBR), TBM_SETPOS, 1, pData->targetMax); 
+
+			SendMessage(GetDlgItem(hdlg, IDC_SLDYNA), TBM_SETRANGE, 0, MAKELONG(1, 100)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLDYNA), TBM_SETPOS, 1, pData->dynamicity); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLSCENE), TBM_SETRANGE, 0, MAKELONG(1, 100)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLSCENE), TBM_SETPOS, 1, pData->sceneThreshold); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETRANGE, 0, MAKELONG(1, 100)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETPOS, 1, pData->maxK); 
+			editing = false;
+			return TRUE;
+		case WM_COMMAND:
+			if (editing) return FALSE;
+			switch(LOWORD(wParam)) {
+				case IDOK:
+					*pData = tempData;
+					EndDialog(hdlg, TRUE);
+					return TRUE;
+				case IDCANCEL:
+					EndDialog(hdlg, FALSE);
+					return TRUE;
+				case IDC_BTNWWW:
+					ShellExecute(NULL, NULL, L"http://www.infognition.com/", NULL, NULL, SW_SHOW);
+					break;
+			}
+			break;
+		case WM_HSCROLL:
+			if (editing) return FALSE;
+			editing = true;
+			HWND h = (HWND)lParam;
+			UINT id = GetWindowLong(h, GWL_ID);
+			int x, y;
+			switch(id) {
+			case IDC_SLMINBR:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				tempData.targetMin = x;
+				SetDlgItemInt(hdlg, IDC_MINBR, x, FALSE);
+				y = SendMessage(GetDlgItem(hdlg, IDC_SLMAXBR), TBM_GETPOS, 0, 0); 
+				if (y < x) {
+					y = x < 255 ? x + 1 : 255;
+					SendMessage(GetDlgItem(hdlg, IDC_SLMAXBR), TBM_SETPOS, 1, y); 
+					SetDlgItemInt(hdlg, IDC_MAXBR, y, FALSE);
+				}
+				break;
+			case IDC_SLMAXBR:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				tempData.targetMax = x;
+				SetDlgItemInt(hdlg, IDC_MAXBR, x, FALSE);
+				y = SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_GETPOS, 0, 0); 
+				if (y > x) {
+					y = x > 0 ? x - 1 : 0;
+					SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETPOS, 1, y); 
+					SetDlgItemInt(hdlg, IDC_MINBR, y, FALSE);
+				}
+				break;
+			case IDC_SLDYNA:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				tempData.dynamicity = x;
+				SetDlgItemInt(hdlg, IDC_DYNA, x, FALSE);
+				break;
+			case IDC_SLSCENE:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				tempData.sceneThreshold = x;
+				SetDlgItemInt(hdlg, IDC_SCENE, x, FALSE);
+				break;
+			case IDC_SLMAXK:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				tempData.maxK = x;
+				SetDlgItemInt(hdlg, IDC_MAXK, x, FALSE);
+				break;
+			}
+			SetWindowLong(hdlg, DWLP_MSGRESULT, 0);
+			editing = false;
+			return TRUE;
+	}//switch msg
+	return 0;
+}
+
 int configProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, VDXHWND hwndParent) 
 {
-	return 0;
+    MyFilterData* pData = (MyFilterData*)fa->filter_data;
+    
+    return !DialogBoxParam(g_hInst, MAKEINTRESOURCE(IDD_SETTINGS), (HWND)hwndParent, SettingsDlgProc, (LPARAM)pData);
 }
 
 static void stringProc2(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int maxlen) 
@@ -170,7 +273,7 @@ bool fssProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, i
 static struct VDXFilterDefinition myfilter_definition={
     0,0,NULL,                       // next, prev, and module (set to zero)
     "Intelligent Brightness & Contrast",                    // name
-    "Smoothly adjusts brightness & contrast to desired levels.",    // description
+    "Smoothly adjusts brightness and contrast to desired levels.",    // description
     "Infognition Co. Ltd.",         // author / maker
     NULL,                           // no private data
     sizeof(MyFilterData),           // no instance data size
