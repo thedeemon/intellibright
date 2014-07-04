@@ -17,7 +17,7 @@ struct MyFilterData {
 	int oldMin;
 
 	void init() {
-		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; maxK = 50;
+		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; maxK = 25;
 		lastColors.resize(96);
 		memset(&lastColors[0], 0, 96*sizeof(int));
 	}
@@ -142,6 +142,7 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 	MyFilterData* pData = (MyFilterData*)GetWindowLongPtr(hdlg, DWLP_USER);
 	static bool editing = false;
 	static MyFilterData tempData;
+	TCHAR str[64];
     switch(msg) {
         case WM_INITDIALOG:
 			SetWindowLongPtr(hdlg, DWLP_USER, lParam);
@@ -153,7 +154,8 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			SetDlgItemInt(hdlg, IDC_MAXBR, pData->targetMax, FALSE);
 			SetDlgItemInt(hdlg, IDC_DYNA, pData->dynamicity, FALSE);
 			SetDlgItemInt(hdlg, IDC_SCENE, pData->sceneThreshold, FALSE);
-			SetDlgItemInt(hdlg, IDC_MAXK, pData->maxK, FALSE);
+			_snwprintf(str, 64, L"%.1lfx", pData->maxK / 10.0);
+			SetDlgItemText(hdlg, IDC_MAXK, str);
 
 			SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETRANGE, 0, MAKELONG(0, 255)); 
 			SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETPOS, 1, pData->targetMin); 
@@ -225,7 +227,9 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			case IDC_SLMAXK:
 				x = SendMessage(h, TBM_GETPOS, 0, 0); 
 				tempData.maxK = x;
-				SetDlgItemInt(hdlg, IDC_MAXK, x, FALSE);
+				//SetDlgItemInt(hdlg, IDC_MAXK, x, FALSE);
+				_snwprintf(str, 64, L"%.1lfx", x / 10.0);
+				SetDlgItemText(hdlg, IDC_MAXK, str);
 				break;
 			}
 			SetWindowLong(hdlg, DWLP_MSGRESULT, 0);
@@ -245,8 +249,7 @@ int configProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, VDXHWND hw
 static void stringProc2(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int maxlen) 
 {
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
-
-	//_snprintf(buf, maxlen, " (%dx%d, %d)", pData->dx, pData->dy, pData->GetQuality() );
+	_snprintf(buf, maxlen, " (%d-%d)", pData->targetMin, pData->targetMax );
 }
 
 void stringProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf)
@@ -256,10 +259,18 @@ void stringProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, cha
 
 void configScriptFunc(IVDXScriptInterpreter *isi, void *lpVoid, VDXScriptValue *argv, int argc) 
 {
+	VDXFilterActivation *fa = (VDXFilterActivation *)lpVoid;
+	MyFilterData* pData = (MyFilterData*)fa->filter_data;
+	if (pData->dynamicity==0) pData->init();
+	if (argc==5) {
+		pData->targetMin = argv[0].asInt(); pData->targetMax = argv[1].asInt();
+		pData->dynamicity = argv[2].asInt(); pData->sceneThreshold = argv[3].asInt(); 
+		pData->maxK = argv[4].asInt();
+	}
 }
 
 VDXScriptFunctionDef script_functions[] = {
-    { (VDXScriptFunctionPtr)configScriptFunc, "Config", "0iii" },
+    { (VDXScriptFunctionPtr)configScriptFunc, "Config", "0iiiii" },
     { NULL, NULL, NULL },
 };
 
@@ -267,12 +278,15 @@ VDXScriptObject script_obj = { NULL, script_functions, NULL };
 
 bool fssProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int bufsize) 
 {
-	return false;
+	MyFilterData* pData = (MyFilterData*)fa->filter_data;
+	_snprintf(buf, bufsize, "Config(%d, %d, %d, %d, %d)", pData->targetMin, pData->targetMax, 
+		pData->dynamicity, pData->sceneThreshold, pData->maxK);
+	return true;
 }
 
 static struct VDXFilterDefinition myfilter_definition={
     0,0,NULL,                       // next, prev, and module (set to zero)
-    "Intelligent Brightness & Contrast",                    // name
+    "Intelligent Brightness",                    // name
     "Smoothly adjusts brightness and contrast to desired levels.",    // description
     "Infognition Co. Ltd.",         // author / maker
     NULL,                           // no private data
