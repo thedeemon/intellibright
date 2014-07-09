@@ -7,11 +7,14 @@
 #include "resource.h"
 #include <Commctrl.h>
 #include <shellapi.h>
+#include <Windowsx.h>
 
 struct MyFilterData {
 	int targetMin, targetMax; //0 .. 255
-	int dynamicity, sceneThreshold, maxK; // 1 .. 100;  maxK = 40 means k <= 4.0
-	int alpha; // 1..50; *0.1 too
+	int dynamicity, sceneThreshold; // 1 .. 100
+	int	curveWidth; // 1 .. 255; 
+	int alpha; // 1..250; /50
+	int p_mode; //0,1,2 - max, average, median
 
 	std::vector<int> lastColors, curve;
 	double oldK;
@@ -20,12 +23,12 @@ struct MyFilterData {
 	bool drawn;
 
 	void init() {
-		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; maxK = 25;
-		alpha = 15;
+		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; 
+		curveWidth = 100;	alpha = 100; p_mode = 0;
 		lastColors.resize(96);
 		memset(&lastColors[0], 0, 96*sizeof(int));
 		curve.resize(256);
-		hbmp = NULL;
+		hbmp = NULL;  
 		drawn = false;
 	}
 
@@ -34,21 +37,23 @@ struct MyFilterData {
 	}
 
 	void calcCurve() {
-		for(int i=0;i<256;i++) {
-			double x = i / 255.0;
-			double a = alpha / 10.0;
-			double k = maxK / 10.0;
-			int t = targetMin + pow(x, a)*k * 255;
+		for(int i=0;i<curveWidth;i++) {
+			double x = (double)i / curveWidth;
+			double a = alpha / 50.0;
+			//double k = curveWidth / 10.0;
+			int t = targetMin + pow(x, a) * (targetMax - targetMin);
 			if (t > targetMax) t = targetMax;
 			curve[i] = t;
 		}
+		for(int i=curveWidth;i<256;i++)
+			curve[i] = targetMax;
 		drawn = false;
 	}
 
 	void drawCurve() {
 		if (hbmp==NULL) return;
 		int* data = new int[256*256];
-		int bgClr = 0x40, dataClr = 0x80f040;
+		int bgClr = 0x40, dataClr = 0x40c0c0;
 		for(int x=0;x<256;x++) {
 			for(int y=0;y<targetMin;y++)
 				data[(255-y)*256+x] = bgClr;
@@ -89,7 +94,8 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
     ptrdiff_t     srcpitch = fa->dst.pitch;
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
 
-	int nr[256]={}, ng[256]={}, nb[256]={}, nrgb[256]={}, cls[96]={};
+	int nr[256]={}, ng[256]={}, nb[256]={}, nrgb[256]={}, cls[96]={}, nmx[256]={};
+	long nVals = w * h * 3, nPix = w * h;
 
 	//collect histos
     for(int y=0; y<h; ++y) {
@@ -98,6 +104,8 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 			nr[ pixel[0] ]++;
 			ng[ pixel[1] ]++;
 			nb[ pixel[2] ]++;
+			const int mx = max(pixel[0], max(pixel[1], pixel[2]));
+			nmx[mx]++;
 		}
         dst = (uint32 *)((char *)dst + dstpitch);
         src = (const uint32 *)((const char *)src + srcpitch);
@@ -115,11 +123,47 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 	while(maxBr >= 0 && nrgb[maxBr]==0) maxBr--;
 	double k = 1;
 	bool work = false;
-	if (maxBr > minBr && (minBr != pData->targetMin || maxBr != pData->targetMax)) {
-		k = (double)(pData->targetMax - pData->targetMin) / (maxBr - minBr);
-		if (k > pData->maxK / 10.0) {
-			k = pData->maxK / 10.0;
+
+	//determine target range by using the curve
+	int P = 0;
+	switch(pData->p_mode) {
+	case 0://max
+		P = maxBr;		
+		break;
+	case 1://avg
+		{
+			long sumBr = 0;
+			for(int i=0;i<256;i++) {
+				long q = (long)nmx[i] * i;
+				sumBr += q;
+			}
+			P = sumBr / nPix;
 		}
+		break;
+	case 2://median
+		{
+			long sumBr = 0;
+			for(int i=0;i<256;i++) {
+				long q = (long)nmx[i] * i;
+				sumBr += q;
+			}
+			long halfSum = sumBr / 2;
+			long p = 0;
+			sumBr = 0;
+			while(p < 256 && sumBr + nmx[p]*p < halfSum) {
+				sumBr += nmx[p]*p;
+				p++;
+			}
+			P = p;
+		}
+		break;
+	}
+
+	int trgMin = pData->targetMin;
+	int trgMax = pData->curve[P];
+
+	if (maxBr > minBr && (minBr != trgMin || maxBr != trgMax)) {
+		k = (double)(trgMax - trgMin) / (maxBr - minBr);
 		work = true;
 	}
 
@@ -143,7 +187,7 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 
 	if (work) {
 		for(int i=0;i<256;i++) {
-			int v = (i - minBr) * k + pData->targetMin + 0.5;
+			int v = (i - minBr) * k + trgMin + 0.5;
 			tbl[i] = v < pData->targetMin ? pData->targetMin : (v > pData->targetMax ? pData->targetMax : v);
 		}
 		for(int y=0; y<h; ++y) {
@@ -194,6 +238,7 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 	RECT imgRect;
 	imgRect.left = 240; imgRect.top = 256;
 	imgRect.right = imgRect.left + 256; imgRect.bottom = imgRect.top + 256;
+	HWND combo;
     switch(msg) {
         case WM_INITDIALOG:
 			SetWindowLongPtr(hdlg, DWLP_USER, lParam);
@@ -205,9 +250,10 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			SetDlgItemInt(hdlg, IDC_MAXBR, pData->targetMax, FALSE);
 			SetDlgItemInt(hdlg, IDC_DYNA, pData->dynamicity, FALSE);
 			SetDlgItemInt(hdlg, IDC_SCENE, pData->sceneThreshold, FALSE);
-			_snwprintf(str, 64, L"%.1lf", pData->maxK / 10.0);
-			SetDlgItemText(hdlg, IDC_MAXK, str);
-			_snwprintf(str, 64, L"%.1lf", pData->alpha / 10.0);
+			//_snwprintf(str, 64, L"%d", pData->curveWidth);
+			//SetDlgItemText(hdlg, IDC_MAXK, str);
+			SetDlgItemInt(hdlg, IDC_MAXK, pData->curveWidth, FALSE);
+			_snwprintf(str, 64, L"%.2lf", pData->alpha / 50.0);
 			SetDlgItemText(hdlg, IDC_ALPHA, str);
 
 			SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETRANGE, 0, MAKELONG(0, 255)); 
@@ -219,10 +265,16 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			SendMessage(GetDlgItem(hdlg, IDC_SLDYNA), TBM_SETPOS, 1, pData->dynamicity); 
 			SendMessage(GetDlgItem(hdlg, IDC_SLSCENE), TBM_SETRANGE, 0, MAKELONG(1, 100)); 
 			SendMessage(GetDlgItem(hdlg, IDC_SLSCENE), TBM_SETPOS, 1, pData->sceneThreshold); 
-			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETRANGE, 0, MAKELONG(1, 100)); 
-			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETPOS, 1, pData->maxK); 
-			SendMessage(GetDlgItem(hdlg, IDC_SLALPHA), TBM_SETRANGE, 0, MAKELONG(1, 50)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETRANGE, 0, MAKELONG(0, 255)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETPOS, 1, pData->curveWidth); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLALPHA), TBM_SETRANGE, 0, MAKELONG(1, 250)); 
 			SendMessage(GetDlgItem(hdlg, IDC_SLALPHA), TBM_SETPOS, 1, pData->alpha); 
+
+			combo = GetDlgItem(hdlg, IDC_PCOMBO);
+			ComboBox_AddString(combo, L"Source Max");
+			ComboBox_AddString(combo, L"Source Average");
+			ComboBox_AddString(combo, L"Source Median");
+			ComboBox_SetCurSel(combo, pData->p_mode);
 			editing = false;
 			tempData.createBmp();
 			tempData.calcCurve();
@@ -232,6 +284,7 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			switch(LOWORD(wParam)) {
 				case IDOK:
 					*pData = tempData;
+					pData->p_mode = ComboBox_GetCurSel(GetDlgItem(hdlg, IDC_PCOMBO));
 					EndDialog(hdlg, TRUE);
 					return TRUE;
 				case IDCANCEL:
@@ -288,17 +341,15 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 				break;
 			case IDC_SLMAXK:
 				x = SendMessage(h, TBM_GETPOS, 0, 0); 
-				tempData.maxK = x;
-				//SetDlgItemInt(hdlg, IDC_MAXK, x, FALSE);
-				_snwprintf(str, 64, L"%.1lf", x / 10.0);
-				SetDlgItemText(hdlg, IDC_MAXK, str);
+				tempData.curveWidth = x;
+				SetDlgItemInt(hdlg, IDC_MAXK, x, FALSE);
 				tempData.calcCurve();
 				InvalidateRect(hdlg, &imgRect, FALSE);
 				break;
 			case IDC_SLALPHA:
 				x = SendMessage(h, TBM_GETPOS, 0, 0); 
 				tempData.alpha = x;
-				_snwprintf(str, 64, L"%.1lf", x / 10.0);
+				_snwprintf(str, 64, L"%.2lf", x / 50.0);
 				SetDlgItemText(hdlg, IDC_ALPHA, str);
 				tempData.calcCurve();
 				InvalidateRect(hdlg, &imgRect, FALSE);
@@ -318,7 +369,6 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 				hdc = BeginPaint(hdlg, &ps); 
 				HDC memDC = CreateCompatibleDC(hdc);
 				SelectObject(memDC, tempData.hbmp);
-				//TextOut(hdc, 0, 0, "Hello, Windows!", 15); 
 				BitBlt(hdc, imgRect.left, imgRect.top, 256,256, memDC, 0,0, SRCCOPY);
 				EndPaint(hdlg, &ps); 
 				DeleteObject(memDC);
@@ -351,15 +401,16 @@ void configScriptFunc(IVDXScriptInterpreter *isi, void *lpVoid, VDXScriptValue *
 	VDXFilterActivation *fa = (VDXFilterActivation *)lpVoid;
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
 	if (pData->dynamicity==0) pData->init();
-	if (argc==5) {
+	if (argc==6) {
 		pData->targetMin = argv[0].asInt(); pData->targetMax = argv[1].asInt();
 		pData->dynamicity = argv[2].asInt(); pData->sceneThreshold = argv[3].asInt(); 
-		pData->maxK = argv[4].asInt();
+		pData->curveWidth = argv[4].asInt(); pData->alpha = argv[5].asInt();
+		pData->calcCurve();
 	}
 }
 
 VDXScriptFunctionDef script_functions[] = {
-    { (VDXScriptFunctionPtr)configScriptFunc, "Config", "0iiiii" },
+    { (VDXScriptFunctionPtr)configScriptFunc, "Config", "0iiiiii" },
     { NULL, NULL, NULL },
 };
 
@@ -368,8 +419,8 @@ VDXScriptObject script_obj = { NULL, script_functions, NULL };
 bool fssProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int bufsize) 
 {
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
-	_snprintf(buf, bufsize, "Config(%d, %d, %d, %d, %d)", pData->targetMin, pData->targetMax, 
-		pData->dynamicity, pData->sceneThreshold, pData->maxK);
+	_snprintf(buf, bufsize, "Config(%d, %d, %d, %d, %d, %d)", pData->targetMin, pData->targetMax, 
+		pData->dynamicity, pData->sceneThreshold, pData->curveWidth, pData->alpha);
 	return true;
 }
 
