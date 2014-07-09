@@ -11,16 +11,64 @@
 struct MyFilterData {
 	int targetMin, targetMax; //0 .. 255
 	int dynamicity, sceneThreshold, maxK; // 1 .. 100;  maxK = 40 means k <= 4.0
+	int alpha; // 1..50; *0.1 too
 
-	std::vector<int> lastColors;
+	std::vector<int> lastColors, curve;
 	double oldK;
 	int oldMin;
+	HBITMAP hbmp;
+	bool drawn;
 
 	void init() {
 		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; maxK = 25;
+		alpha = 15;
 		lastColors.resize(96);
 		memset(&lastColors[0], 0, 96*sizeof(int));
+		curve.resize(256);
+		hbmp = NULL;
+		drawn = false;
 	}
+
+	void createBmp() {
+		hbmp = CreateCompatibleBitmap(GetDC(NULL), 256, 256);
+	}
+
+	void calcCurve() {
+		for(int i=0;i<256;i++) {
+			double x = i / 255.0;
+			double a = alpha / 10.0;
+			double k = maxK / 10.0;
+			int t = targetMin + pow(x, a)*k * 255;
+			if (t > targetMax) t = targetMax;
+			curve[i] = t;
+		}
+		drawn = false;
+	}
+
+	void drawCurve() {
+		if (hbmp==NULL) return;
+		int* data = new int[256*256];
+		int bgClr = 0x40, dataClr = 0x80f040;
+		for(int x=0;x<256;x++) {
+			for(int y=0;y<targetMin;y++)
+				data[(255-y)*256+x] = bgClr;
+			for(int y=targetMin; y <= curve[x]; y++)
+				data[(255-y)*256+x] = dataClr;
+			for(int y= curve[x]+1; y < 256; y++)
+				data[(255-y)*256+x] = bgClr;
+		}
+		for(int n=1;n<10;n++) {
+			for(int x=0;x<256;x++) {
+				int y = n*255/10;
+				data[y*256 + x] |= 0x808080;
+				data[x*256 + y] |= 0x808080;
+			}
+		}
+		SetBitmapBits(hbmp, 256*256*4, data);
+		delete[] data;
+		drawn = true;
+	}
+
 };
 
 extern HINSTANCE g_hInst;
@@ -143,6 +191,9 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 	static bool editing = false;
 	static MyFilterData tempData;
 	TCHAR str[64];
+	RECT imgRect;
+	imgRect.left = 240; imgRect.top = 256;
+	imgRect.right = imgRect.left + 256; imgRect.bottom = imgRect.top + 256;
     switch(msg) {
         case WM_INITDIALOG:
 			SetWindowLongPtr(hdlg, DWLP_USER, lParam);
@@ -154,8 +205,10 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			SetDlgItemInt(hdlg, IDC_MAXBR, pData->targetMax, FALSE);
 			SetDlgItemInt(hdlg, IDC_DYNA, pData->dynamicity, FALSE);
 			SetDlgItemInt(hdlg, IDC_SCENE, pData->sceneThreshold, FALSE);
-			_snwprintf(str, 64, L"%.1lfx", pData->maxK / 10.0);
+			_snwprintf(str, 64, L"%.1lf", pData->maxK / 10.0);
 			SetDlgItemText(hdlg, IDC_MAXK, str);
+			_snwprintf(str, 64, L"%.1lf", pData->alpha / 10.0);
+			SetDlgItemText(hdlg, IDC_ALPHA, str);
 
 			SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETRANGE, 0, MAKELONG(0, 255)); 
 			SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETPOS, 1, pData->targetMin); 
@@ -168,7 +221,11 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			SendMessage(GetDlgItem(hdlg, IDC_SLSCENE), TBM_SETPOS, 1, pData->sceneThreshold); 
 			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETRANGE, 0, MAKELONG(1, 100)); 
 			SendMessage(GetDlgItem(hdlg, IDC_SLMAXK), TBM_SETPOS, 1, pData->maxK); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLALPHA), TBM_SETRANGE, 0, MAKELONG(1, 50)); 
+			SendMessage(GetDlgItem(hdlg, IDC_SLALPHA), TBM_SETPOS, 1, pData->alpha); 
 			editing = false;
+			tempData.createBmp();
+			tempData.calcCurve();
 			return TRUE;
 		case WM_COMMAND:
 			if (editing) return FALSE;
@@ -186,6 +243,7 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 			}
 			break;
 		case WM_HSCROLL:
+			{
 			if (editing) return FALSE;
 			editing = true;
 			HWND h = (HWND)lParam;
@@ -202,6 +260,8 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 					SendMessage(GetDlgItem(hdlg, IDC_SLMAXBR), TBM_SETPOS, 1, y); 
 					SetDlgItemInt(hdlg, IDC_MAXBR, y, FALSE);
 				}
+				tempData.calcCurve();
+				InvalidateRect(hdlg, &imgRect, FALSE);
 				break;
 			case IDC_SLMAXBR:
 				x = SendMessage(h, TBM_GETPOS, 0, 0); 
@@ -213,6 +273,8 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 					SendMessage(GetDlgItem(hdlg, IDC_SLMINBR), TBM_SETPOS, 1, y); 
 					SetDlgItemInt(hdlg, IDC_MINBR, y, FALSE);
 				}
+				tempData.calcCurve();
+				InvalidateRect(hdlg, &imgRect, FALSE);
 				break;
 			case IDC_SLDYNA:
 				x = SendMessage(h, TBM_GETPOS, 0, 0); 
@@ -228,13 +290,40 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 				x = SendMessage(h, TBM_GETPOS, 0, 0); 
 				tempData.maxK = x;
 				//SetDlgItemInt(hdlg, IDC_MAXK, x, FALSE);
-				_snwprintf(str, 64, L"%.1lfx", x / 10.0);
+				_snwprintf(str, 64, L"%.1lf", x / 10.0);
 				SetDlgItemText(hdlg, IDC_MAXK, str);
+				tempData.calcCurve();
+				InvalidateRect(hdlg, &imgRect, FALSE);
+				break;
+			case IDC_SLALPHA:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				tempData.alpha = x;
+				_snwprintf(str, 64, L"%.1lf", x / 10.0);
+				SetDlgItemText(hdlg, IDC_ALPHA, str);
+				tempData.calcCurve();
+				InvalidateRect(hdlg, &imgRect, FALSE);
 				break;
 			}
 			SetWindowLong(hdlg, DWLP_MSGRESULT, 0);
 			editing = false;
 			return TRUE;
+			}
+		case WM_PAINT:
+			{
+				if (tempData.hbmp==NULL) return 0;
+				if (!tempData.drawn)
+					tempData.drawCurve();
+				PAINTSTRUCT ps; 
+				HDC hdc; 
+				hdc = BeginPaint(hdlg, &ps); 
+				HDC memDC = CreateCompatibleDC(hdc);
+				SelectObject(memDC, tempData.hbmp);
+				//TextOut(hdc, 0, 0, "Hello, Windows!", 15); 
+				BitBlt(hdc, imgRect.left, imgRect.top, 256,256, memDC, 0,0, SRCCOPY);
+				EndPaint(hdlg, &ps); 
+				DeleteObject(memDC);
+			}
+			break;
 	}//switch msg
 	return 0;
 }
