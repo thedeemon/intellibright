@@ -511,11 +511,17 @@ void configScriptFunc(IVDXScriptInterpreter *isi, void *lpVoid, VDXScriptValue *
 	VDXFilterActivation *fa = (VDXFilterActivation *)lpVoid;
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
 	if (pData->dynamicity==0) pData->init();
-	if (argc==7) {
+	if (argc>=7) {
 		pData->targetMin = argv[0].asInt(); pData->targetMax = argv[1].asInt();
 		pData->dynamicity = argv[2].asInt(); pData->sceneThreshold = argv[3].asInt(); 
 		pData->curveEnd = argv[4].asInt(); pData->alpha = argv[5].asInt();
 		pData->p_mode = argv[6].asInt();
+		if (argc==9) {
+			pData->curveStart = argv[7].asInt();
+			pData->beta = argv[8].asInt();
+		} else {
+			pData->curveStart = 0; pData->beta = 0;
+		}
 		pData->calcCurve();
 	}
 }
@@ -530,8 +536,8 @@ VDXScriptObject script_obj = { NULL, script_functions, NULL };
 bool fssProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int bufsize) 
 {
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
-	_snprintf(buf, bufsize, "Config(%d, %d, %d, %d, %d, %d, %d)", pData->targetMin, pData->targetMax, 
-		pData->dynamicity, pData->sceneThreshold, pData->curveEnd, pData->alpha, pData->p_mode);
+	_snprintf(buf, bufsize, "Config(%d, %d, %d, %d, %d, %d, %d, %d ,%d)", pData->targetMin, pData->targetMax, 
+		pData->dynamicity, pData->sceneThreshold, pData->curveEnd, pData->alpha, pData->p_mode, pData->curveStart, pData->beta);
 	return true;
 }
 
