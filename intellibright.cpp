@@ -278,7 +278,7 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 	static MyFilterData orgData;
 	TCHAR str[64];
 	RECT imgRect;
-	imgRect.left = 240; imgRect.top = 320;
+	imgRect.left = 240; imgRect.top = 330;
 	imgRect.right = imgRect.left + 256; imgRect.bottom = imgRect.top + 256;
 	HWND combo;
 	const int timerID = 526;
@@ -527,7 +527,7 @@ void configScriptFunc(IVDXScriptInterpreter *isi, void *lpVoid, VDXScriptValue *
 }
 
 VDXScriptFunctionDef script_functions[] = {
-    { (VDXScriptFunctionPtr)configScriptFunc, "Config", "0iiiiiii" },
+    { (VDXScriptFunctionPtr)configScriptFunc, "Config", "0iiiiiiiii" },
     { NULL, NULL, NULL },
 };
 
