@@ -28,8 +28,8 @@ struct MyFilterData {
 
 	void init() {
 		targetMin = 0; targetMax = 255; dynamicity = 10; sceneThreshold = 20; oldMin = 0; oldK = 1.0; 		
-		curveEnd = 26;	alpha = 30; p_mode = 1; lastP = 255;
-		curveStart = 0; beta = 30;
+		curveEnd = 26;	alpha = 50; p_mode = 1; lastP = 255;
+		curveStart = 0; beta = 50;
 		lastColors.resize(96);
 		memset(&lastColors[0], 0, 96*sizeof(int));
 		curve.resize(256);
@@ -45,13 +45,29 @@ struct MyFilterData {
 
 	void calcCurve() {
 		for(int i=0;i<curveStart;i++) 
-			curve[i] = i;
-		for(int i=0;i<curveEnd;i++) {
-			double x = (double)i / curveEnd;
-			double a = alpha / 50.0;
-			//double k = curveEnd / 10.0;
-			int t = targetMin + pow(x, a) * (targetMax - targetMin);
+			curve[i] = targetMin + i;
+		/*
+		f(x) = ax^3 + bx^2 + cx
+		f'(0) = c = alpha
+		f'(1) = 3a + 2b + c = beta
+		  => 3a + 2b = beta - alpha
+		  => b = (beta - alpha - 3a)/2
+		f(1) = a+b+c = 1
+		  => a + beta/2 - alpha/2 - 3/2a + alpha = 1
+		  => beta + alpha  - 2 =  a
+
+		*/
+		for(int i=curveStart;i<curveEnd;i++) {
+			double x = (double)(i - curveStart) / (curveEnd - curveStart);
+			double al = alpha / 50.0;
+			double be = beta / 50.0;
+			double c = al;
+			double a = al + be - 2;
+			double b = (be - al - 3*a)/2;
+			double h = targetMax - targetMin - curveStart;
+			int t = targetMin + curveStart + (a*x*x*x + b*x*x + c*x) * h;
 			if (t > targetMax) t = targetMax;
+			if (t < targetMin) t = targetMin;
 			curve[i] = t;
 		}
 		for(int i=curveEnd;i<256;i++)
@@ -62,7 +78,7 @@ struct MyFilterData {
 	void drawCurve() {
 		if (hbmp==NULL) return;
 		int* data = new int[256*256];
-		int bgClr = 0x40, dataClr = 0x40c0c0, P_Clr = 0xFF0000;
+		int bgClr = 0x40, dataClr = 0x40c0c0, P_Clr = 0xFF0000, P_Clr1 = 0x00FF00;;
 		for(int x=0;x<256;x++) {
 			for(int y=0;y<targetMin;y++)
 				data[(255-y)*256+x] = bgClr;
@@ -72,9 +88,6 @@ struct MyFilterData {
 				data[(255-y)*256+x] = bgClr;
 		}
 
-		for(int y=targetMin; y <= curve[lastP]; y++)
-			data[(255-y)*256+lastP] = P_Clr;
-
 		for(int n=1;n<10;n++) {
 			for(int x=0;x<256;x++) {
 				int y = n*255/10;
@@ -82,6 +95,14 @@ struct MyFilterData {
 				data[x*256 + y] |= 0x808080;
 			}
 		}
+
+		int yeqx = targetMin + lastP;
+		if (yeqx > curve[lastP]) yeqx = curve[lastP];
+		for(int y=targetMin; y < yeqx; y++)
+			data[(255-y)*256+lastP] = P_Clr1;
+		for(int y=yeqx; y <= curve[lastP]; y++)
+			data[(255-y)*256+lastP] = P_Clr;
+
 		SetBitmapBits(hbmp, 256*256*4, data);
 		delete[] data;
 		drawn = true;
@@ -179,9 +200,12 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 
 	int trgMin = pData->targetMin;
 	int trgMax = pData->curve[P];
-
+	double maxAllowedK = maxBr > minBr ? (double)(pData->targetMax - trgMin) / (maxBr - minBr) : 1;
 	if (maxBr > minBr && (minBr != trgMin || maxBr != trgMax)) {
-		k = (double)(trgMax - trgMin) / (maxBr - minBr);
+		if (pData->p_mode==0)
+			k = (double)(trgMax - trgMin) / (maxBr - minBr);
+		else
+			k = min(P > 0 ? (double)(trgMax - trgMin) / P : 1, maxAllowedK);
 		work = true;
 	}
 
