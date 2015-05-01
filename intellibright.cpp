@@ -131,7 +131,7 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
     uint32       *dst      = (uint32 *)fa->dst.data;
     ptrdiff_t     dstpitch = fa->dst.pitch;
     const uint32 *src      = (const uint32 *)fa->src.data;
-    ptrdiff_t     srcpitch = fa->dst.pitch;
+    ptrdiff_t     srcpitch = fa->src.pitch;
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
 
 	int nr[256]={}, ng[256]={}, nb[256]={}, nrgb[256]={}, cls[96]={}, nmx[256]={};

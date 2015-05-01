@@ -9,6 +9,7 @@ syntax: glob
 *.sdf
 *.opensdf
 *.suo
+*.aps
 Debug/*
 Release/*
 VTune/*
