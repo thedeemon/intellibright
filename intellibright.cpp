@@ -536,7 +536,7 @@ VDXScriptObject script_obj = { NULL, script_functions, NULL };
 bool fssProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int bufsize) 
 {
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
-	_snprintf(buf, bufsize, "Config(%d, %d, %d, %d, %d, %d, %d, %d ,%d)", pData->targetMin, pData->targetMax, 
+	_snprintf(buf, bufsize, "Config(%d, %d, %d, %d, %d, %d, %d, %d, %d)", pData->targetMin, pData->targetMax, 
 		pData->dynamicity, pData->sceneThreshold, pData->curveEnd, pData->alpha, pData->p_mode, pData->curveStart, pData->beta);
 	return true;
 }
