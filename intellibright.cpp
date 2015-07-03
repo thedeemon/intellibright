@@ -121,10 +121,22 @@ extern HINSTANCE g_hInst;
 
 long paramProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff) 
 {
-	return FILTERPARAM_SWAP_BUFFERS;
+	const VDXPixmapLayout& pxsrc = *fa->src.mpPixmapLayout;
+          VDXPixmapLayout& pxdst = *fa->dst.mpPixmapLayout;
+          
+    // check for a source format that we support
+    if (pxsrc.format != nsVDXPixmap::kPixFormat_YUV420_Planar && pxsrc.format != nsVDXPixmap::kPixFormat_XRGB8888)
+        return FILTERPARAM_NOT_SUPPORTED;
+
+    // set old depth value to zero to indicate new pixmap layout should be used
+	if (pxsrc.format == nsVDXPixmap::kPixFormat_YUV420_Planar)
+		fa->dst.depth = 0;
+	pxdst.format = pxsrc.format;
+
+	return FILTERPARAM_SWAP_BUFFERS | FILTERPARAM_SUPPORTS_ALTFORMATS;
 }
 
-int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) 
+void processRGB32(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) 
 {
 	int           w        = fa->dst.w;
     int           h        = fa->dst.h;
@@ -256,7 +268,163 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 		pData->lastColors[i] = cls[i];
 	pData->oldK = k;
 	pData->oldMin = minBr;
-    return 0;
+}
+
+void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
+{
+	const int HF = 2;
+	const int w = fa->dst.w;
+    const int h = fa->dst.h;
+	int	cls[96]={}, ny[256]={}, nu[256]={}, nv[256]={};
+	const long nPix = w * h;
+	const int srcpitch = fa->src.mpPixmap->pitch;// inTroika.srcLineSizes[0];
+	const int dstpitch = fa->dst.mpPixmap->pitch;// outTroika.srcLineSizes[0];
+	MyFilterData* pData = (MyFilterData*)fa->filter_data;
+
+	//collect histos
+	BYTE *src = (BYTE*) fa->src.mpPixmap->data;// inTroika.pSrcData[0];
+	BYTE *dst = (BYTE*) fa->dst.mpPixmap->data;
+
+	for(int y=0;y<h;y++) {
+		for(int i=0;i<w;i++)
+			ny[src[i]]++;
+		src += srcpitch;
+	}
+
+	BYTE *srcu = (BYTE*) fa->src.mpPixmap->data2; //inTroika.pSrcData[1];
+	BYTE *srcv = (BYTE*) fa->src.mpPixmap->data3; //inTroika.pSrcData[2];
+	auto upitch = fa->src.mpPixmap->pitch2;
+	auto vpitch = fa->src.mpPixmap->pitch3;
+	for(int y=0;y<h/HF;y++) {
+		for(int i=0;i<w/2;i++) {
+			nu[srcu[i]]++;
+			nv[srcv[i]]++;
+		}
+		srcu += upitch;// inTroika.srcLineSizes[1];
+		srcv += vpitch;// inTroika.srcLineSizes[2];
+	}
+
+	for(int i=0;i<256;i++) {
+		cls[i/8] += ny[i];
+		cls[i/8 + 32] += nu[i];
+		cls[i/8 + 64] += nv[i];
+	}
+
+	int minBr = 0, maxBr = 255, shift = 0;
+	while(minBr < 256 && ny[minBr]==0) minBr++;
+	while(maxBr >= 0 && ny[maxBr]==0) maxBr--;
+	double k = 1;
+	bool work = false;
+
+	//determine target range by using the curve
+	int P = 0;
+	switch(pData->p_mode) {
+	case 0://max
+		P = maxBr;		
+		break;
+	case 1://avg
+		{
+			long sumBr = 0;
+			for(int i=0;i<256;i++) {
+				long q = (long)ny[i] * i;
+				sumBr += q;
+			}
+			P = sumBr / nPix;
+		}
+		break;
+	case 2://median
+		{
+			long sumPix = 0;
+			long p = 0;			
+			auto half = nPix / 2;
+			while(p < 256 && sumPix + ny[p] < half) {
+				sumPix += ny[p];
+				p++;
+			}
+			P = p;
+		}
+		break;
+	}
+
+	int trgMin = pData->targetMin;
+	int trgMax = pData->curve[P];
+	double maxAllowedK = maxBr > minBr ? (double)(pData->targetMax - trgMin) / (maxBr - minBr) : 1;
+	if (maxBr > minBr && (minBr != trgMin || maxBr != trgMax)) {
+		if (pData->p_mode==0)
+			k = (double)(trgMax - trgMin) / (maxBr - minBr);
+		else
+			k = min(P > 0 ? (double)(trgMax - trgMin) / P : 1, maxAllowedK);
+		work = true;
+	}
+
+	int sum=0, total=0; //scene change check
+	for(int i=0; i<96; i++) {
+		sum += abs(cls[i] - pData->lastColors[i]);
+		total += cls[i];
+	}
+	double chng = (double)sum/total;
+	if (chng * 100 < pData->sceneThreshold) { // not new scene
+		double alpha = pData->dynamicity / 100.0;
+		k = k * alpha + pData->oldK * (1.0 - alpha); // smooth the parameters
+		minBr = minBr * alpha + pData->oldMin * (1.0 - alpha);
+		work = true;
+	}
+
+	BYTE tbl[256];
+
+	//BYTE *dst = outTroika.pSrcData[0];
+	//src = inTroika.pSrcData[0];
+	src = (BYTE*) fa->src.mpPixmap->data;
+
+	if (work) {
+		for(int i=0;i<256;i++) {
+			int v = (i - minBr) * k + trgMin + 0.5;
+			tbl[i] = v < pData->targetMin ? pData->targetMin : (v > pData->targetMax ? pData->targetMax : v);
+		}
+
+		for(int y=0;y<h;y++) {
+			for(int i=0;i<w;i++)
+				dst[i] = tbl[ src[i] ];
+			src += srcpitch;
+			dst += dstpitch;
+		}
+	} else { //copy
+		for(int y=0;y<h;y++) {
+			memcpy(dst, src, w);
+			src += srcpitch;
+			dst += dstpitch;
+		}
+	}    
+
+	//copy U & V
+	const int dpitch2 = fa->dst.mpPixmap->pitch2;// outTroika.srcLineSizes[1];
+	const int dpitch3 = fa->dst.mpPixmap->pitch3;//outTroika.srcLineSizes[2];
+	const int spitch2 = upitch; //inTroika.srcLineSizes[1];
+	const int spitch3 = vpitch; //inTroika.srcLineSizes[2];
+
+	BYTE *dstdata2 = (BYTE*)fa->dst.mpPixmap->data2;
+	BYTE *dstdata3 = (BYTE*)fa->dst.mpPixmap->data3;
+	BYTE *srcdata2 = (BYTE*)fa->src.mpPixmap->data2;
+	BYTE *srcdata3 = (BYTE*)fa->src.mpPixmap->data3;
+
+	for(int y=0;y<h/HF;y++) {
+		memcpy(& dstdata2[y * dpitch2], &srcdata2[y * spitch2], w/2);
+		memcpy(& dstdata3[y * dpitch3], &srcdata3[y * spitch3], w/2);
+	}
+
+	for(int i=0;i<96;i++)
+		pData->lastColors[i] = cls[i];
+	pData->oldK = k;
+	pData->oldMin = minBr;
+} // processYV12
+
+int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) 
+{
+	if (fa->src.mpPixmap->format==nsVDXPixmap::kPixFormat_XRGB8888)
+		processRGB32(fa, ff);
+	else
+		processYV12(fa, ff);
+	return 0;
 }
 
 int startProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff)
