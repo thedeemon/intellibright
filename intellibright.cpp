@@ -370,7 +370,7 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 		work = true;
 	}
 
-	BYTE tbl[256];
+	BYTE tbl[256], uvtbl[256];
 
 	//BYTE *dst = outTroika.pSrcData[0];
 	//src = inTroika.pSrcData[0];
@@ -380,6 +380,8 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 		for(int i=0;i<256;i++) {
 			int v = (i - minBr) * k + trgMin + 0.5;
 			tbl[i] = v < pData->targetMin ? pData->targetMin : (v > pData->targetMax ? pData->targetMax : v);
+			int u = 128 + (i - 128) * k;
+			uvtbl[i] = u < 0 ? 0 : (u > 255 ? 255 : u);
 		}
 
 		for(int y=0;y<h;y++) {
@@ -396,7 +398,7 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 		}
 	}    
 
-	//copy U & V
+	//transorm or copy U & V
 	const int dpitch2 = fa->dst.mpPixmap->pitch2;// outTroika.srcLineSizes[1];
 	const int dpitch3 = fa->dst.mpPixmap->pitch3;//outTroika.srcLineSizes[2];
 	const int spitch2 = upitch; //inTroika.srcLineSizes[1];
@@ -407,9 +409,22 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 	BYTE *srcdata2 = (BYTE*)fa->src.mpPixmap->data2;
 	BYTE *srcdata3 = (BYTE*)fa->src.mpPixmap->data3;
 
-	for(int y=0;y<h/HF;y++) {
-		memcpy(& dstdata2[y * dpitch2], &srcdata2[y * spitch2], w/2);
-		memcpy(& dstdata3[y * dpitch3], &srcdata3[y * spitch3], w/2);
+	if (work) {
+		for(int y=0;y<h/HF;y++) {
+			for(int i=0;i<w/2;i++) {
+				dstdata2[i] = uvtbl[ srcdata2[i] ];
+				dstdata3[i] = uvtbl[ srcdata3[i] ];
+			}
+			srcdata2 += spitch2;
+			dstdata2 += dpitch2;
+			srcdata3 += spitch3;
+			dstdata3 += dpitch3;
+		}
+	} else {
+		for(int y=0;y<h/HF;y++) {
+			memcpy(& dstdata2[y * dpitch2], &srcdata2[y * spitch2], w/2);
+			memcpy(& dstdata3[y * dpitch3], &srcdata3[y * spitch3], w/2);
+		}
 	}
 
 	for(int i=0;i<96;i++)
@@ -516,7 +531,7 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 					EndDialog(hdlg, FALSE);
 					return TRUE;
 				case IDC_BTNWWW:
-					ShellExecute(NULL, NULL, L"http://www.infognition.com/", NULL, NULL, SW_SHOW);
+					ShellExecute(NULL, NULL, L"http://www.infognition.com/brightness/", NULL, NULL, SW_SHOW);
 					break;
 				case IDC_PCOMBO:
 					if (HIWORD(wParam) == CBN_SELCHANGE) {
