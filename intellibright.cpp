@@ -35,7 +35,6 @@ struct MyFilterData {
         curve.resize(256);
         hbmp = NULL;
         drawn = false;
-        //ifp = NULL;
     }
 
     void createBmp() {
@@ -277,12 +276,12 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
     const int h = fa->dst.h;
     int	cls[96]={}, ny[256]={}, nu[256]={}, nv[256]={};
     const long nPix = w * h;
-    const int srcpitch = fa->src.mpPixmap->pitch;// inTroika.srcLineSizes[0];
-    const int dstpitch = fa->dst.mpPixmap->pitch;// outTroika.srcLineSizes[0];
+    const int srcpitch = fa->src.mpPixmap->pitch;
+    const int dstpitch = fa->dst.mpPixmap->pitch;
     MyFilterData* pData = (MyFilterData*)fa->filter_data;
 
     //collect histos
-    BYTE *src = (BYTE*) fa->src.mpPixmap->data;// inTroika.pSrcData[0];
+    BYTE *src = (BYTE*) fa->src.mpPixmap->data;
     BYTE *dst = (BYTE*) fa->dst.mpPixmap->data;
 
     for(int y=0;y<h;y++) {
@@ -291,8 +290,8 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
         src += srcpitch;
     }
 
-    BYTE *srcu = (BYTE*) fa->src.mpPixmap->data2; //inTroika.pSrcData[1];
-    BYTE *srcv = (BYTE*) fa->src.mpPixmap->data3; //inTroika.pSrcData[2];
+    BYTE *srcu = (BYTE*) fa->src.mpPixmap->data2;
+    BYTE *srcv = (BYTE*) fa->src.mpPixmap->data3;
     auto upitch = fa->src.mpPixmap->pitch2;
     auto vpitch = fa->src.mpPixmap->pitch3;
     for(int y=0;y<h/HF;y++) {
@@ -300,8 +299,8 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
             nu[srcu[i]]++;
             nv[srcv[i]]++;
         }
-        srcu += upitch;// inTroika.srcLineSizes[1];
-        srcv += vpitch;// inTroika.srcLineSizes[2];
+        srcu += upitch;
+        srcv += vpitch;
     }
 
     for(int i=0;i<256;i++) {
@@ -372,8 +371,6 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
 
     BYTE tbl[256], uvtbl[256];
 
-    //BYTE *dst = outTroika.pSrcData[0];
-    //src = inTroika.pSrcData[0];
     src = (BYTE*) fa->src.mpPixmap->data;
 
     if (work) {
@@ -399,10 +396,10 @@ void processYV12(const VDXFilterActivation *fa, const VDXFilterFunctions *ff)
     }
 
     //transorm or copy U & V
-    const int dpitch2 = fa->dst.mpPixmap->pitch2;// outTroika.srcLineSizes[1];
-    const int dpitch3 = fa->dst.mpPixmap->pitch3;//outTroika.srcLineSizes[2];
-    const int spitch2 = upitch; //inTroika.srcLineSizes[1];
-    const int spitch3 = vpitch; //inTroika.srcLineSizes[2];
+    const int dpitch2 = fa->dst.mpPixmap->pitch2;
+    const int dpitch3 = fa->dst.mpPixmap->pitch3;
+    const int spitch2 = upitch;
+    const int spitch3 = vpitch;
 
     BYTE *dstdata2 = (BYTE*)fa->dst.mpPixmap->data2;
     BYTE *dstdata3 = (BYTE*)fa->dst.mpPixmap->data3;
@@ -519,7 +516,6 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
             if (editing) return FALSE;
             switch(LOWORD(wParam)) {
                 case IDOK:
-                    //*pData = tempData;
                     pData->ifp = NULL;
                     KillTimer(hdlg, timerID);
                     EndDialog(hdlg, TRUE);
@@ -674,7 +670,6 @@ int configProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, VDXHWND hw
     MyFilterData* pData = (MyFilterData*)fa->filter_data;
     pData->ifp = fa->ifp;
     auto res = !DialogBoxParam(g_hInst, MAKEINTRESOURCE(IDD_SETTINGS), (HWND)hwndParent, SettingsDlgProc, (LPARAM)pData);
-    //pData->ifp = NULL;
     return res;
 }
 
@@ -733,7 +728,7 @@ static struct VDXFilterDefinition myfilter_definition={
     sizeof(MyFilterData),           // no instance data size
     NULL,                           // no initProc
     NULL,                           // no deinitProc
-    runProc,                   // runProc
+    runProc,                        // runProc
     paramProc,
     configProc,
     stringProc,
