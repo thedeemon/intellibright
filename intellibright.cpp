@@ -458,7 +458,9 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
     static MyFilterData orgData;
     TCHAR str[64];
     RECT imgRect;
-    imgRect.left = 240; imgRect.top = 330;
+    int dpi = GetDpiForWindow(hdlg);
+    if (!dpi) dpi = 96;
+    imgRect.left = 240 * dpi / 96; imgRect.top = 330 * dpi / 96;
     imgRect.right = imgRect.left + 256; imgRect.bottom = imgRect.top + 256;
     HWND combo;
     const int timerID = 526;
